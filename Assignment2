@@ -1,0 +1,265 @@
+library(ggplot2)
+library(MASS)
+library(leaps)
+library(reshape2)
+library(plotmo)
+library(corrplot)
+library(tidyverse)
+library(gapminder)
+library(dplyr)
+library(GGally)
+library(reshape2)
+library(caret)
+library(ggpubr)
+library(psych)
+library(boot)
+library(broom)
+library(car)
+library(pROC)
+
+#Import data from website
+
+#Summary statistics
+
+dim(titanic)
+print(paste("Missing data:", sum(is.na(titanic)),sep=" ",collapse=""))
+head(titanic)
+summary(titanic)
+fix(titanic)
+
+#Convert to dataframe without Names
+
+titanic.df <- select(titanic, Survived, Pclass, Sex, Age, SibSpou, ParChild, Fare)
+
+#Convert categorical variables into factors
+
+titanic.df$Survived = factor(titanic.df$Survived)
+titanic.df$Pclass = factor(titanic.df$Pclass, order=TRUE, levels = c(3, 2, 1))
+titanic.df$Sex = factor(titanic.df$Sex)
+
+summary(titanic.df)
+
+a <- factor(a, levels = c("male", "female"), labels = c(0,1))
+a =as.integer(as.character(a))
+titanic.df$SexBinary = a
+
+#Shows the data with the factors
+
+str(titanic.df)
+
+#Create a correlation plot
+
+ggcorr(titanic.df[2:7],
+       nbreaks = 6,
+       label = TRUE,
+       label_size = 3,
+       color =  "grey")
+
+cor(titanic.df[2:7])
+
+as.integer(titanic.df$Sex)
+
+cols <- character(nrow(titanic.df))
+cols[titanic.df$Survived == "0"] <- "red"
+cols[titanic.df$Survived == "1"] <- "blue"
+
+#Scatterplot to show variable correlation
+
+pairs(titanic.df[,2:7], col = cols, main = "Scatterplots showing variable correlation")
+
+pairs.panels(titanic.df[,2:7],
+             gap = 0,
+             bg = c("blue", "red")[titanic.df$Survived],
+             pch = 21)
+
+#Start exploring and make plots to see how many survived
+
+ggplot(titanic.df, aes(x = Survived, fill = Survived)) +
+  geom_bar(width=0.5) +
+  geom_text(stat='count', aes(label=stat(count)), vjust=-0.5) +
+  theme_classic() + labs(y="Number of Passengers") +
+  ggtitle("Survival Rate") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#See how sex influenced survival
+
+ggplot(titanic.df, aes(x = Survived, fill=Sex)) +
+  geom_bar(position = position_dodge()) +
+  geom_text(stat= "count", 
+            aes(label=stat(count)), 
+            position = position_dodge(width=1), vjust=-0.5)+
+  theme_classic() + labs(y = "Number of Passengers") +
+  ggtitle("Survival Rate by Sex") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#See how class influences survival
+
+ggplot(titanic.df, aes(x = Survived, fill=Pclass)) +
+  geom_bar(position = position_dodge()) +
+  geom_text(stat= "count", 
+            aes(label=stat(count)), 
+            position = position_dodge(width=1), vjust=-0.5)+
+  theme_classic() + labs(y = "Number of Passengers") +
+  ggtitle("Survival Rate by Class") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#Age density
+
+ggplot(titanic.df, aes(x = Age)) +
+  geom_density(fill="lightblue") + labs(y = "Density") +
+  ggtitle("Age Density") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Discretize age to plot survival
+titanic.df$Discretized.age = cut(titanic.df$Age, c(0,10,20,30,40,50,60,70,80,100))
+
+ggplot(titanic.df, aes(x = Discretized.age, fill=Survived)) +
+  geom_bar(position = position_dodge()) +
+  geom_text(stat='count', aes(label=stat(count)), position = position_dodge(width=1), vjust=-0.5)+
+  theme_classic() + labs(x= "Age Group", y = "Number of Passengers") +
+  ggtitle("Survival Rate by Age") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+titanic.df$Discretized.age = NULL
+
+#Set seed to make reproducible results
+
+set.seed(100)
+
+#Split into test and train
+
+TrainingIndex <- createDataPartition(titanic.df$Survived, p = 0.8, list = FALSE)
+TrainingSet <- titanic.df[TrainingIndex,]
+TestingSet <- titanic.df[-TrainingIndex,]
+
+#Create Family Size variable
+
+TrainingSet$FamilySize <- TrainingSet$SibSpou + TrainingSet$ParChild + 1
+TestingSet$FamilySize <- TestingSet$SibSpou + TestingSet$ParChild + 1
+titanic.df$FamilySize <- titanic.df$SibSpou + titanic.df$ParChild +1
+
+#Perform forward and backward stepwise selection to select relevant variables
+
+fwd = regsubsets(Survived~ Pclass + Sex + Age + SibSpou + ParChild + Fare, data = TrainingSet, nvmax = 10, method = "forward")
+summary(fwd)
+
+#Fit a logistic regression using training data
+
+glm.fit=glm(Survived ~ Pclass + Sex + Age + FamilySize + Fare,
+            data=TrainingSet ,family=binomial )
+summary (glm.fit)
+
+#Estimate probabilities using testing data
+
+glm.probs <- predict(glm.fit, TestingSet, type ="response")
+glm.probs[1:10]
+
+contrasts(TestingSet$Survived)
+
+#Work out testing error rate
+
+glm.pred <- rep("0", 177)
+glm.pred[glm.probs>.5]="1"
+table(glm.pred, TestingSet$Survived)
+mean(glm.pred!=TestingSet$Survived)
+
+#Restrict the model, omitting the insignificant variables and run regression again
+
+glm.fit1=glm(Survived ~ Pclass + Sex + Age + SibSpou,
+            data=TrainingSet ,family=binomial )
+summary (glm.fit1)
+glm.probs1 <- predict(glm.fit1, TestingSet, type = "response")
+glm.pred1 <- rep("0", 177)
+glm.pred1[glm.probs1>.5]="1"
+table(glm.pred1, TestingSet$Survived)
+mean(glm.pred1!=TestingSet$Survived)
+
+predict(glm.fit, newdata = data.frame(Pclass=2, Sex = "female", Age = 18, ParChild = 2, SibSpou = 3, Fare = 30), type = "response")
+
+#Create ROC Curves and AUC
+
+roc(TrainingSet$Survived, glm.fit$fitted.values, plot = "True", legacy.axes="TRUE",
+    xlab = "False positive rate", ylab = "True positive rate", main = "Logistic ROC Curve")
+
+prediction(p$posterior[,2], TrainingSet$Survived) %>%
+  performance(measure = "tpr", x.measure = "fpr") %>%
+  plot(main = "LDA ROC Curve")
+
+prediction(p$posterior[,2], TrainingSet$Survived) %>%
+  performance(measure = "auc") %>%
+  .@y.values
+
+#Linear Discriminant Analysis
+
+lda.fit <- lda(Survived ~ Pclass + Sex + Age + FamilySize + Fare, data = TrainingSet)
+lda.fit
+plot(lda.fit)
+
+p <- predict(lda.fit, TrainingSet)
+ldahist(data = p$x[,1], g = TestingSet$Survived)
+
+p1 <- predict(lda.fit, TestingSet)$class
+tab1 <- table(Predicted = p1, Actual = TestingSet$Survived)
+tab1
+sum(diag(tab1))/sum(tab1)
+
+install.packages("")
+df = generateThreshVsPerfData(pred1, measures = list(fpr, tpr, mmce))
+
+#Try a Quadratic Discriminant Analysis Model
+
+qda.fit <- qda(Survived ~ Pclass + Sex + Age + FamilySize + Fare, data = TrainingSet)
+qda.fit
+
+#Test the accuracy of the QDA model
+
+p2 <- predict(qda.fit, TestingSet)$class
+tab2 <- table(Predicted = p2, Actual = TestingSet$Survived)
+tab2
+sum(diag(tab2))/sum(tab2)
+
+#Test normality using Shapiro-Wilk
+
+shapiro.test(titanic.df$Age)
+
+
+#Diagnostic Tests
+
+#Cook's Distance to check for outliers
+
+plot(glm.fit, which = 4, id.n = 3)
+
+model.data <- augment(glm.fit) %>% mutate(index = 1:n())
+model.data %>% top_n(3, .cooksd)
+
+ggplot(model.data, aes(index, .std.resid)) + 
+  geom_point(aes(color = Survived), alpha = .5) +
+  theme_bw() + ggtitle("Plot of the Standardised Residuals")
+            
+model.data %>% 
+  filter(abs(.std.resid) > 3)
+
+#Check for multi-collinearity
+
+car::vif(glm.fit)
+
+
+#Perform K-fold (10) Cross Validation to assess accuracy of the model
+
+set.seed(100)
+cv.error.10=rep(0 ,10)
+  for (i in 1:10){glm.fit=glm(Survived ~ Pclass + Sex + Age + SibSpou + ParChild + Fare ,
+                data=TrainingSet)
+  cv.error.10[i]=cv.glm(TrainingSet,glm.fit ,K=10) $delta [1]
+  }
+cv.error.10
+mean(cv.error.10)
+
+
+glm.fit1=glm(Survived ~ Pclass + Sex + Age + FamilySize + Fare,
+             data=titanic.df ,family=binomial )
+summary (glm.fit1)
